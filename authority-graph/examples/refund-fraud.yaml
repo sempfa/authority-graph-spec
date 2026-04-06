@@ -1,0 +1,434 @@
+# Authority Graph: Refund-Fraud Scenario
+# The Architecting Autonomy series' primary illustration.
+# Two domains (payment, fraud) with overlapping authority at the composition seam.
+# See the Authority Graph Formalization companion paper for the full narrative.
+
+constitution:
+  id: "system-constitution"
+  invariants:
+    - type: "compound"
+      operator: "AND"
+      children:
+        - type: "comparison"
+          field: "action.irreversible"
+          operator: "eq"
+          value: true
+        - type: "comparison"
+          field: "audit.record_produced"
+          operator: "eq"
+          value: true
+    - type: "comparison"
+      field: "scope.expansion_under_unconfirmed_state"
+      operator: "eq"
+      value: false
+  default: "deny"
+  metadata:
+    created: "2026-04-01T00:00:00Z"
+    version: 1
+    approved_by: ["system-owner"]
+
+domains:
+
+  - id: "payment-domain"
+    name: "Payment"
+    description: "All financial transaction authority"
+    authority_units: ["payment-supervisor", "payment-agent-refund"]
+    domain_contract:
+      inherits_from: "system-constitution"
+      invariants:
+        - type: "comparison"
+          field: "refund.amount"
+          operator: "lte"
+          value: 500
+          # Refunds above $500 require supervisor delegation
+      overrides: []
+      delegation_policy:
+        max_depth: 2
+        re_delegation_default: false
+        requires_provenance: true
+        cross_domain_delegation: "prohibited"
+      export_policy:
+        composable_units: ["payment-agent-refund"]
+        composition_primitives_permitted: ["conjunction", "precedence"]
+        sovereign_retention: ["account_limits", "payment_policy"]
+    parent_constitution: "system-constitution"
+
+  - id: "fraud-domain"
+    name: "Fraud"
+    description: "Risk assessment and transaction hold authority"
+    authority_units: ["fraud-supervisor", "fraud-agent-hold"]
+    domain_contract:
+      inherits_from: "system-constitution"
+      invariants:
+        - type: "compound"
+          operator: "AND"
+          children:
+            - type: "comparison"
+              field: "transaction.flagged"
+              operator: "eq"
+              value: true
+            - type: "comparison"
+              field: "fraud.evaluation_complete"
+              operator: "eq"
+              value: true
+          # Any flagged transaction requires fraud evaluation before proceeding
+      overrides: []
+      delegation_policy:
+        max_depth: 2
+        re_delegation_default: false
+        requires_provenance: true
+        cross_domain_delegation: "prohibited"
+      export_policy:
+        composable_units: ["fraud-agent-hold"]
+        composition_primitives_permitted: ["conjunction"]
+        sovereign_retention: ["flag_status", "risk_assessment"]
+    parent_constitution: "system-constitution"
+
+authority_units:
+
+  # Root
+  - id: "system-authority"
+    scope:
+      decision_type: "all"
+      domain: "all"
+      conditions: []
+      limits: []
+    delegation:
+      granted_by: null
+      contract: null
+      re_delegation: true
+      re_delegation_constraints: []
+    termination:
+      expiry: null
+      revocation_triggers: []
+      context_dependencies: []
+    provenance:
+      chain: []
+      verifiable: false
+
+  # Payment Supervisor
+  - id: "payment-supervisor"
+    scope:
+      decision_type: "payment.refund.policy"
+      domain: "transactions"
+      conditions: []
+      limits:
+        - dimension: "aggregate_daily_refund"
+          type: "max"
+          value: 100000
+          period:
+            value: 24
+            unit: "hours"
+    delegation:
+      granted_by: "system-authority"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "all"
+            attenuated: "payment.refund.policy"
+          - dimension: "domain"
+            original: "all"
+            attenuated: "transactions"
+        restrictions: []
+        re_delegation_permitted: true
+        re_delegation_max_depth: 1
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: true
+      re_delegation_constraints:
+        - dimension: "decision_type"
+          type: "enumeration"
+          value: ["payment.refund.approval"]
+          period: null
+    termination:
+      expiry: null
+      revocation_triggers:
+        - type: "comparison"
+          field: "supervisor.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies: []
+    provenance:
+      chain: ["system-authority"]
+      verifiable: false
+
+  # Payment Agent (Refund)
+  - id: "payment-agent-refund"
+    scope:
+      decision_type: "payment.refund.approval"
+      domain: "transactions"
+      conditions:
+        - type: "compound"
+          operator: "AND"
+          children:
+            - type: "comparison"
+              field: "account.valid"
+              operator: "eq"
+              value: true
+            - type: "comparison"
+              field: "transaction.value"
+              operator: "lt"
+              value: 5000
+      limits:
+        - dimension: "transaction_value"
+          type: "max"
+          value: 5000
+          period: null
+        - dimension: "scope"
+          type: "enumeration"
+          value: ["single_transaction"]
+          period: null
+    delegation:
+      granted_by: "payment-supervisor"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "payment.refund.policy"
+            attenuated: "payment.refund.approval"
+          - dimension: "limits"
+            original: "aggregate_daily_100K"
+            attenuated: "single_transaction_max_5000"
+        restrictions:
+          - type: "comparison"
+            field: "delegation.target_domain"
+            operator: "neq"
+            value: "external"
+        re_delegation_permitted: false
+        re_delegation_max_depth: 0
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: false
+      re_delegation_constraints: []
+    termination:
+      expiry: null
+      revocation_triggers:
+        - type: "comparison"
+          field: "agent.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies: []
+    provenance:
+      chain: ["payment-supervisor", "system-authority"]
+      verifiable: false
+
+  # Fraud Supervisor
+  - id: "fraud-supervisor"
+    scope:
+      decision_type: "fraud.transaction.policy"
+      domain: "flagged_transactions"
+      conditions: []
+      limits: []
+    delegation:
+      granted_by: "system-authority"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "all"
+            attenuated: "fraud.transaction.policy"
+          - dimension: "domain"
+            original: "all"
+            attenuated: "flagged_transactions"
+        restrictions: []
+        re_delegation_permitted: true
+        re_delegation_max_depth: 1
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: true
+      re_delegation_constraints:
+        - dimension: "decision_type"
+          type: "enumeration"
+          value: ["fraud.transaction.hold"]
+          period: null
+    termination:
+      expiry: null
+      revocation_triggers:
+        - type: "comparison"
+          field: "supervisor.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies: []
+    provenance:
+      chain: ["system-authority"]
+      verifiable: false
+
+  # Fraud Agent (Hold)
+  - id: "fraud-agent-hold"
+    scope:
+      decision_type: "fraud.transaction.hold"
+      domain: "flagged_transactions"
+      conditions:
+        - type: "comparison"
+          field: "risk_score"
+          operator: "gt"
+          value: 0.7
+      limits:
+        - dimension: "hold_duration"
+          type: "max"
+          value: 48
+          period:
+            value: 48
+            unit: "hours"
+    delegation:
+      granted_by: "fraud-supervisor"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "fraud.transaction.policy"
+            attenuated: "fraud.transaction.hold"
+          - dimension: "limits"
+            original: null
+            attenuated: "hold_duration_max_48h"
+        restrictions: []
+        re_delegation_permitted: false
+        re_delegation_max_depth: 0
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: false
+      re_delegation_constraints: []
+    termination:
+      expiry: null
+      revocation_triggers:
+        - type: "comparison"
+          field: "agent.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies:
+        - type: "comparison"
+          field: "hold.duration_elapsed"
+          operator: "gt"
+          value: 48
+          # Hold lapses after 48 hours if not explicitly extended
+    provenance:
+      chain: ["fraud-supervisor", "system-authority"]
+      verifiable: false
+
+edges:
+
+  # Delegation chain: system → payment supervisor → payment agent
+  - type: "delegation"
+    id: "delegation-system-to-payment-supervisor"
+    from: "system-authority"
+    to: "payment-supervisor"
+    created: "2026-04-01T00:00:00Z"
+
+  - type: "delegation"
+    id: "delegation-payment-supervisor-to-agent"
+    from: "payment-supervisor"
+    to: "payment-agent-refund"
+    created: "2026-04-01T00:00:00Z"
+
+  # Delegation chain: system → fraud supervisor → fraud agent
+  - type: "delegation"
+    id: "delegation-system-to-fraud-supervisor"
+    from: "system-authority"
+    to: "fraud-supervisor"
+    created: "2026-04-01T00:00:00Z"
+
+  - type: "delegation"
+    id: "delegation-fraud-supervisor-to-agent"
+    from: "fraud-supervisor"
+    to: "fraud-agent-hold"
+    created: "2026-04-01T00:00:00Z"
+
+  # Composition: payment-fraud seam
+  - type: "composition"
+    id: "payment-fraud-composition"
+    parties: ["payment-agent-refund", "fraud-agent-hold"]
+    contract:
+      id: "payment-fraud-contract"
+      parties: ["payment-agent-refund", "fraud-agent-hold"]
+      interactions:
+        - interaction_class: "refund_on_flagged_transaction"
+          primitive: "conjunction"
+          invariants:
+            - type: "compound"
+              operator: "AND"
+              children:
+                - type: "comparison"
+                  field: "transaction.flagged"
+                  operator: "eq"
+                  value: true
+                - type: "comparison"
+                  field: "fraud.evaluation_complete"
+                  operator: "eq"
+                  value: true
+          conflict_resolution:
+            strategy: "halt_and_escalate"
+            escalation_path:
+              target: "fraud-supervisor"
+              context_required:
+                - "transaction_id"
+                - "refund_amount"
+                - "risk_score"
+                - "fraud_evaluation_status"
+              resolution_encoding: true
+            precedence_ordering: null
+            timeout:
+              value: 30
+              unit: "minutes"
+          stop_rights: ["fraud-agent-hold"]
+      scope:
+        decision_type: "payment.refund.approval"
+        domain: "flagged_transactions"
+        conditions:
+          - type: "compound"
+            operator: "AND"
+            children:
+              - type: "comparison"
+                field: "transaction.flagged"
+                operator: "eq"
+                value: true
+              - type: "comparison"
+                field: "refund.requested"
+                operator: "eq"
+                value: true
+        limits: []
+      sovereign_retention:
+        - party: "fraud-agent-hold"
+          retained_decisions: ["flag_status", "risk_assessment"]
+        - party: "payment-agent-refund"
+          retained_decisions: ["account_limits", "refund_amount"]
+      termination:
+        expiry: null
+        renegotiation_conditions: []
+      metadata:
+        created: "2026-04-01T00:00:00Z"
+        version: 1
+        approved_by: ["system-owner"]
+    created: "2026-04-01T00:00:00Z"
+
+# Diagnostic: scope overlap discovered by graph analysis
+scope_overlaps:
+  - id: "overlap-payment-fraud"
+    units: ["payment-agent-refund", "fraud-agent-hold"]
+    overlap_region:
+      decision_type: "payment.refund.approval"
+      domain: "flagged_transactions"
+      conditions:
+        - type: "compound"
+          operator: "AND"
+          children:
+            - type: "comparison"
+              field: "transaction.flagged"
+              operator: "eq"
+              value: true
+            - type: "comparison"
+              field: "refund.requested"
+              operator: "eq"
+              value: true
+      limits: []
+    resolution: "composition_contract"
+    contract_ref: "payment-fraud-contract"
+
+# Diagnostic: gap discovered by graph analysis
+gaps:
+  - decision_type: "payment.credit_limit.override"
+    domain: "transactions"
+    status: "unresolved"
+    assigned_to: null
+    # No authority unit covers credit limit overrides.
+    # This is a governance finding requiring a design decision.
