@@ -58,7 +58,7 @@ This specification is part of the [Architecting Autonomy](https://architectingau
 - [**Article 9: Authority Composition**](https://architectingautonomy.substack.com/p/authority-composition): establishes composition primitives and contracts
 - [**Article 10: Legibility as Structural Requirement**](https://architectingautonomy.substack.com/p/legibility-as-structural-requirement): defines what makes authority readable
 - [**Article 11: Governance at Machine Speed**](https://architectingautonomy.substack.com/p/governance-at-machine-speed): proves that constraint must precede cognition
-- **Authority Graph Formalization** (companion paper): translates the arc's claims into architectural blueprint
+- [**Authority Graph Formalization**](https://architectingautonomy.substack.com/p/authority-graph-formalisation) (companion paper): translates the arc's claims into architectural blueprint
 
 The specification makes the companion paper implementable. The companion explains why and how. The specification says exactly what.
 
