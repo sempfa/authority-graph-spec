@@ -1,0 +1,203 @@
+# Authority Graph: Minimal Complete Example
+# A three-agent document processing system demonstrating every graph element.
+# See spec.md Appendix B for the full annotated version.
+
+constitution:
+  id: "system-constitution"
+  invariants:
+    - type: "compound"
+      operator: "AND"
+      children:
+        - type: "comparison"
+          field: "action.irreversible"
+          operator: "eq"
+          value: true
+        - type: "comparison"
+          field: "audit.record_produced"
+          operator: "eq"
+          value: true
+  default: "deny"
+  metadata:
+    created: "2026-04-01T00:00:00Z"
+    version: 1
+    approved_by: ["system-owner"]
+
+authority_units:
+
+  # Root authority
+  - id: "system-authority"
+    scope:
+      decision_type: "all"
+      domain: "documents"
+      conditions: []
+      limits: []
+    delegation:
+      granted_by: null
+      contract: null
+      re_delegation: true
+      re_delegation_constraints: []
+    termination:
+      expiry: null
+      revocation_triggers: []
+      context_dependencies: []
+    provenance:
+      chain: []
+      verifiable: false
+
+  # Review Agent: can approve internal and confidential documents
+  - id: "review-agent-approval"
+    scope:
+      decision_type: "document_approval"
+      domain: "documents"
+      conditions:
+        - type: "comparison"
+          field: "document.status"
+          operator: "eq"
+          value: "pending_review"
+      limits:
+        - dimension: "document_classification"
+          type: "enumeration"
+          value: ["internal", "confidential"]
+          period: null
+    delegation:
+      granted_by: "system-authority"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "all"
+            attenuated: "document_approval"
+          - dimension: "limits"
+            original: null
+            attenuated: "classification <= confidential"
+        restrictions:
+          - type: "comparison"
+            field: "document.classification"
+            operator: "not_in"
+            value: ["top_secret"]
+        re_delegation_permitted: false
+        re_delegation_max_depth: 0
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: false
+      re_delegation_constraints: []
+    termination:
+      expiry: "2026-12-31T23:59:59Z"
+      revocation_triggers:
+        - type: "comparison"
+          field: "agent.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies: []
+    provenance:
+      chain: ["system-authority"]
+      verifiable: false
+
+  # Archive Agent: can archive approved documents
+  - id: "archive-agent-archival"
+    scope:
+      decision_type: "document_archival"
+      domain: "documents"
+      conditions:
+        - type: "comparison"
+          field: "document.status"
+          operator: "eq"
+          value: "approved"
+      limits:
+        - dimension: "batch_size"
+          type: "max"
+          value: 100
+          period: null
+    delegation:
+      granted_by: "system-authority"
+      contract:
+        scope_attenuation:
+          - dimension: "decision_type"
+            original: "all"
+            attenuated: "document_archival"
+          - dimension: "conditions"
+            original: null
+            attenuated: "document must be approved"
+        restrictions:
+          - type: "comparison"
+            field: "document.status"
+            operator: "neq"
+            value: "approved"
+        re_delegation_permitted: false
+        re_delegation_max_depth: 0
+        termination_on_grantor_revocation: "immediate"
+        graceful_period: null
+        conditional_requirements: null
+      re_delegation: false
+      re_delegation_constraints: []
+    termination:
+      expiry: "2026-12-31T23:59:59Z"
+      revocation_triggers:
+        - type: "comparison"
+          field: "agent.status"
+          operator: "neq"
+          value: "active"
+      context_dependencies: []
+    provenance:
+      chain: ["system-authority"]
+      verifiable: false
+
+edges:
+
+  # Delegation: system → review agent
+  - type: "delegation"
+    id: "delegation-system-to-review"
+    from: "system-authority"
+    to: "review-agent-approval"
+    created: "2026-04-01T00:00:00Z"
+
+  # Delegation: system → archive agent
+  - type: "delegation"
+    id: "delegation-system-to-archive"
+    from: "system-authority"
+    to: "archive-agent-archival"
+    created: "2026-04-01T00:00:00Z"
+
+  # Composition: review + archive interact (archive depends on review's output)
+  - type: "composition"
+    id: "review-archive-composition"
+    parties: ["review-agent-approval", "archive-agent-archival"]
+    contract:
+      id: "review-archive-contract"
+      parties: ["review-agent-approval", "archive-agent-archival"]
+      interactions:
+        - interaction_class: "archive_after_approval"
+          primitive: "precedence"
+          invariants:
+            - type: "comparison"
+              field: "document.approval_record"
+              operator: "exists"
+              value: null
+          conflict_resolution:
+            strategy: "default_deny"
+            escalation_path: null
+            precedence_ordering: ["review-agent-approval"]
+            timeout: null
+          stop_rights: ["review-agent-approval"]
+      scope:
+        decision_type: "document_archival"
+        domain: "approved_documents"
+        conditions:
+          - type: "comparison"
+            field: "document.status"
+            operator: "eq"
+            value: "approved"
+        limits: []
+      sovereign_retention:
+        - party: "review-agent-approval"
+          retained_decisions: ["approval_status"]
+        - party: "archive-agent-archival"
+          retained_decisions: ["archival_location"]
+      termination:
+        expiry: null
+        renegotiation_conditions: []
+      metadata:
+        created: "2026-04-01T00:00:00Z"
+        version: 1
+        approved_by: ["system-owner"]
+    created: "2026-04-01T00:00:00Z"
